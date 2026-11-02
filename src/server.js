@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const QRCode = require('qrcode');
+const { auth, requiredScopes } = require('express-oauth2-jwt-bearer');
 const db = require('./db');
 const views = require('./views');
 
@@ -11,11 +12,11 @@ const externalUrl = process.env.RENDER_EXTERNAL_URL;
 const port = process.env.PORT ? parseInt(process.env.PORT) : 4080;
 const baseURL = externalUrl || `http://localhost:${port}`;
 
-//public pages
+//Public pages 
 
 app.get('/', async (req, res) => {
   const stats = await db.getStats();
-  //not yet
+  // not yet
   res.send(views.homePage(stats, null, null));
 });
 
@@ -27,8 +28,16 @@ app.get('/info/:id', async (req, res) => {
   res.send(views.passInfoPage(pass));
 });
 
-//api
-app.get('/passes/:id', async (req, res) => {
+//API (OAuth2 client) 
+
+//missing or invalid token -> 401
+const checkToken = auth({
+  issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
+  audience: process.env.AUTH0_AUDIENCE,
+});
+
+// valid token without scope -> 403
+app.get('/passes/:id', checkToken, requiredScopes('read:passes'), async (req, res) => {
   const pass = await db.getPass(req.params.id);
   if (!pass) {
     return res.status(404).json({ error: 'Pass not found' });
@@ -36,7 +45,7 @@ app.get('/passes/:id', async (req, res) => {
   res.json(pass);
 });
 
-app.post('/passes', async (req, res) => {
+app.post('/passes', checkToken, requiredScopes('create:passes'), async (req, res) => {
   const { name, document } = req.body || {};
   if (!name || !document) {
     return res.status(400).json({ error: 'Name and document are required' });
@@ -44,7 +53,7 @@ app.post('/passes', async (req, res) => {
 
   const pass = await db.createPass(name, document);
 
-  //QR code ->public page, Location header-> endpoint
+  //QR code-> public page, Location header ->API endpoint
   const qrPng = await QRCode.toBuffer(`${baseURL}/info/${pass.id}`);
 
   res
